@@ -1,0 +1,13 @@
+.env
+CLAUDE.md
+.last_operation.json
+graphite/movies/*
+graphite/tv/*
+graphite/anime/*
+graphite/people/*
+!graphite/movies/.gitkeep
+!graphite/tv/.gitkeep
+!graphite/anime/.gitkeep
+!graphite/people/.gitkeep
+__pycache__/
+*.pyc
