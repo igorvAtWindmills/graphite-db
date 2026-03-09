@@ -109,13 +109,23 @@ def build_movie_md(meta, credits):
     genres = [g["name"] for g in meta.get("genres", [])]
     tmdb_id = meta["id"]
     directors = [p["name"] for p in credits["crew"] if p["job"] == "Director"]
+    country = (meta.get("production_countries") or [{}])[0].get("name", "")
+    language = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
+    studio = (meta.get("production_companies") or [{}])[0].get("name", "")
 
     lines = [
         "---", "tags: [movie]",
         f"year: {year}",
         f"genre: [{', '.join(genres)}]",
         f"director: [{', '.join(directors)}]",
-        "---", "",
+    ]
+    if country:
+        lines.append(f"country: {country}")
+    if language:
+        lines.append(f"language: {language}")
+    if studio:
+        lines.append(f"studio: {studio}")
+    lines += ["---", "",
         f"# {title} ({year})", "",
         "## Director",
     ]
@@ -159,6 +169,9 @@ def build_tv_md(meta, agg_credits, crew_credits):
     networks = [n["name"] for n in meta.get("networks", [])]
     seasons = meta.get("number_of_seasons", "")
     creators = [c["name"] for c in meta.get("created_by", [])]
+    country = (meta.get("production_countries") or [{}])[0].get("name", "")
+    language = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
+    studio = (meta.get("production_companies") or [{}])[0].get("name", "")
     tag = "anime" if is_anime(meta) else "tv"
 
     lines = [
@@ -172,6 +185,12 @@ def build_tv_md(meta, agg_credits, crew_credits):
         lines.append(f"seasons: {seasons}")
     if creators:
         lines.append(f"creator: [{', '.join(creators)}]")
+    if country:
+        lines.append(f"country: {country}")
+    if language:
+        lines.append(f"language: {language}")
+    if studio:
+        lines.append(f"studio: {studio}")
     lines += ["---", "", f"# {title} ({year})", ""]
 
     if creators:
