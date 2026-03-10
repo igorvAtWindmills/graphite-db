@@ -40,14 +40,14 @@ class C:
     NC    = '\033[0m'
 
 
-GRAPHITE_DIR = Path.home() / "graphite"
-TOKEN = os.environ.get("TMDB_API_TOKEN") or (GRAPHITE_DIR / ".env").read_text().split("TMDB_API_TOKEN=")[1].strip()
+ROOT = Path(__file__).resolve().parent
+TOKEN = os.environ.get("TMDB_API_TOKEN") or (ROOT / ".env").read_text().split("TMDB_API_TOKEN=")[1].strip()
 BASE = "https://api.themoviedb.org/3"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
-VAULT = GRAPHITE_DIR / "graphite"
+VAULT = ROOT / "graphite"
 PEOPLE_DIR = VAULT / "people"
-UNDO_LOG = GRAPHITE_DIR / ".last_operation.json"
+UNDO_LOG = ROOT / ".last_operation.json"
 
 for d in [VAULT / "movies", VAULT / "tv", VAULT / "anime", PEOPLE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
