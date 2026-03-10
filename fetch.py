@@ -154,6 +154,8 @@ def build_movie_md(meta, credits):
     language = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
     studio = (meta.get("production_companies") or [{}])[0].get("name", "")
     collection = (meta.get("belongs_to_collection") or {}).get("name", "")
+    status = meta.get("status", "")
+    keywords = meta.get("_keywords", [])
 
     watched = datetime.date.today().year
     lines = [
@@ -171,6 +173,10 @@ def build_movie_md(meta, credits):
         lines.append(f"studio: {studio}")
     if collection:
         lines.append(f"collection: {collection}")
+    if status:
+        lines.append(f"status: {status}")
+    if keywords:
+        lines.append(f"keywords: [{', '.join(keywords)}]")
     lines += ["---", "",
         f"# {title} ({year})", "",
         "## Director",
@@ -218,6 +224,9 @@ def build_tv_md(meta, agg_credits, crew_credits):
     country = (meta.get("production_countries") or [{}])[0].get("name", "")
     language = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
     studio = (meta.get("production_companies") or [{}])[0].get("name", "")
+    status = meta.get("status", "")
+    tv_type = meta.get("type", "")
+    keywords = meta.get("_keywords", [])
     tag = "anime" if is_anime(meta) else "tv"
 
     watched = datetime.date.today().year
@@ -239,6 +248,12 @@ def build_tv_md(meta, agg_credits, crew_credits):
         lines.append(f"language: {language}")
     if studio:
         lines.append(f"studio: {studio}")
+    if status:
+        lines.append(f"status: {status}")
+    if tv_type:
+        lines.append(f"type: {tv_type}")
+    if keywords:
+        lines.append(f"keywords: [{', '.join(keywords)}]")
     lines += ["---", "", f"# {title} ({year})", ""]
 
     if creators:
@@ -387,8 +402,8 @@ def do_undo():
 
 # ── Fill ──────────────────────────────────────────────────────────────────────
 
-MOVIE_FILL_FIELDS = ["country", "language", "studio", "collection"]
-TV_FILL_FIELDS    = ["network", "seasons", "creator", "country", "language", "studio"]
+MOVIE_FILL_FIELDS = ["country", "language", "studio", "collection", "status", "keywords"]
+TV_FILL_FIELDS    = ["network", "seasons", "creator", "country", "language", "studio", "status", "type", "keywords"]
 
 FIELD_AFTER = {
     "country":    "director",
@@ -398,6 +413,9 @@ FIELD_AFTER = {
     "network":    "genre",
     "seasons":    "network",
     "creator":    "seasons",
+    "status":     "collection",
+    "type":       "status",
+    "keywords":   "type",
 }
 
 
@@ -460,6 +478,13 @@ def fill_entry(entry_path):
         if "collection" in missing:
             v = (meta.get("belongs_to_collection") or {}).get("name", "")
             if v: values["collection"] = v
+        if "status" in missing:
+            v = meta.get("status", "")
+            if v: values["status"] = v
+        if "keywords" in missing:
+            kw = tmdb_get(f"/movie/{tmdb_id}/keywords")
+            kws = [k["name"] for k in kw.get("keywords", [])]
+            if kws: values["keywords"] = f"[{', '.join(kws)}]"
     else:
         if "network" in missing:
             nets = [n["name"] for n in meta.get("networks", [])]
@@ -479,6 +504,16 @@ def fill_entry(entry_path):
         if "studio" in missing:
             v = (meta.get("production_companies") or [{}])[0].get("name", "")
             if v: values["studio"] = v
+        if "status" in missing:
+            v = meta.get("status", "")
+            if v: values["status"] = v
+        if "type" in missing:
+            v = meta.get("type", "")
+            if v: values["type"] = v
+        if "keywords" in missing:
+            kw = tmdb_get(f"/tv/{tmdb_id}/keywords")
+            kws = [k["name"] for k in kw.get("results", [])]
+            if kws: values["keywords"] = f"[{', '.join(kws)}]"
 
     if not values:
         return {}
@@ -627,6 +662,10 @@ def main():
         print(f"  {C.DIM}aborted{C.NC}")
         print()
         return
+
+    # Fetch keywords
+    kw_data = tmdb_get(f"/{media_type}/{tmdb_id}/keywords")
+    meta["_keywords"] = [k["name"] for k in (kw_data.get("keywords") or kw_data.get("results", []))]
 
     # Build and write entry
     if dry_run:
