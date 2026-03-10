@@ -40,14 +40,14 @@ class C:
     NC    = '\033[0m'
 
 
-ROOT = Path(__file__).resolve().parent
-TOKEN = os.environ.get("TMDB_API_TOKEN") or (ROOT / ".env").read_text().split("TMDB_API_TOKEN=")[1].strip()
+GRAPHITE_DIR = Path.home() / "graphite"
+TOKEN = os.environ.get("TMDB_API_TOKEN") or (GRAPHITE_DIR / ".env").read_text().split("TMDB_API_TOKEN=")[1].strip()
 BASE = "https://api.themoviedb.org/3"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
-VAULT = ROOT / "graphite"
+VAULT = GRAPHITE_DIR / "graphite"
 PEOPLE_DIR = VAULT / "people"
-UNDO_LOG = ROOT / ".last_operation.json"
+UNDO_LOG = GRAPHITE_DIR / ".last_operation.json"
 
 for d in [VAULT / "movies", VAULT / "tv", VAULT / "anime", PEOPLE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -134,6 +134,7 @@ def build_movie_md(meta, credits):
     country = (meta.get("production_countries") or [{}])[0].get("name", "")
     language = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
     studio = (meta.get("production_companies") or [{}])[0].get("name", "")
+    collection = (meta.get("belongs_to_collection") or {}).get("name", "")
 
     watched = datetime.date.today().year
     lines = [
@@ -149,6 +150,8 @@ def build_movie_md(meta, credits):
         lines.append(f"language: {language}")
     if studio:
         lines.append(f"studio: {studio}")
+    if collection:
+        lines.append(f"collection: {collection}")
     lines += ["---", "",
         f"# {title} ({year})", "",
         "## Director",
