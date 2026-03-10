@@ -2,14 +2,22 @@
 """
 fetch_movie.py — Add a movie, TV show, or anime to graphite.
 
+Fetches full cast and crew from TMDB and writes a structured markdown
+entry to the Obsidian vault, creating or updating a person file for
+every cast and crew member.
+
 Usage:
     gm "The Dark Knight"
     gm "Adolescence" 2025
-    gm https://www.themoviedb.org/movie/155-the-dark-knight
+    gm https://www.themoviedb.org/movie/155
     gm https://www.themoviedb.org/tv/249042
     gm --undo
+
+Author: Claude (Anthropic)
+License: Public Domain
 """
 
+import datetime
 import json
 import os
 import re
@@ -17,6 +25,20 @@ import sys
 from pathlib import Path
 
 import requests
+
+
+class C:
+    """Soft, muted ANSI colors for comfortable reading."""
+    SAGE  = '\033[38;5;108m'
+    CORAL = '\033[38;5;174m'
+    SAND  = '\033[38;5;180m'
+    SKY   = '\033[38;5;110m'
+    SLATE = '\033[38;5;103m'
+    DIM   = '\033[38;5;242m'
+    MINT  = '\033[38;5;115m'
+    BOLD  = '\033[1m'
+    NC    = '\033[0m'
+
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = os.environ.get("TMDB_API_TOKEN") or (ROOT / ".env").read_text().split("TMDB_API_TOKEN=")[1].strip()
@@ -50,7 +72,7 @@ CREW_JOB_SET = {j for j, _ in CREW_JOBS}
 JOB_LABEL = {j: l for j, l in CREW_JOBS}
 
 
-# ── TMDB helpers ─────────────────────────────────────────────────────────────
+# ── TMDB helpers ──────────────────────────────────────────────────────────────
 
 def tmdb_get(path, **params):
     r = requests.get(f"{BASE}{path}", headers=HEADERS, params=params)
@@ -79,7 +101,7 @@ def search_multi(query, year=None):
     data = tmdb_get("/search/multi", **params)
     results = [r for r in data.get("results", []) if r.get("media_type") in ("movie", "tv")]
     if not results:
-        sys.exit(f"No results for: {query}")
+        sys.exit(f"{C.CORAL}no results for:{C.NC} {query}")
     return results
 
 
@@ -113,9 +135,11 @@ def build_movie_md(meta, credits):
     language = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
     studio = (meta.get("production_companies") or [{}])[0].get("name", "")
 
+    watched = datetime.date.today().year
     lines = [
         "---", "tags: [movie]",
-        f"year: {year}",
+        f"watched: {watched}",
+        f"released: {year}",
         f"genre: [{', '.join(genres)}]",
         f"director: [{', '.join(directors)}]",
     ]
@@ -174,9 +198,11 @@ def build_tv_md(meta, agg_credits, crew_credits):
     studio = (meta.get("production_companies") or [{}])[0].get("name", "")
     tag = "anime" if is_anime(meta) else "tv"
 
+    watched = datetime.date.today().year
     lines = [
         "---", f"tags: [{tag}]",
-        f"year: {year}",
+        f"watched: {watched}",
+        f"released: {year}",
         f"genre: [{', '.join(genres)}]",
     ]
     if networks:
@@ -257,7 +283,6 @@ def update_person_file(name, entry_title, year, roles):
         if "## Works" in content:
             content = content.rstrip() + "\n" + entry_line + "\n"
         elif "## Films" in content:
-            # migrate old section name
             content = content.replace("## Films", "## Works").rstrip() + "\n" + entry_line + "\n"
         else:
             content = content.rstrip() + "\n\n## Works\n" + entry_line + "\n"
@@ -270,7 +295,6 @@ def update_person_file(name, entry_title, year, roles):
 
 
 def collect_roles_movie(credits):
-    """Returns {name: [roles]} for a movie credits dict."""
     person_roles = {}
     for p in credits["cast"]:
         person_roles.setdefault(p["name"], []).append("cast")
@@ -281,7 +305,6 @@ def collect_roles_movie(credits):
 
 
 def collect_roles_tv(meta, agg_credits, crew_credits):
-    """Returns {name: [roles]} for a TV show."""
     person_roles = {}
     for c in meta.get("created_by", []):
         person_roles.setdefault(c["name"], []).append("creator")
@@ -305,15 +328,15 @@ def save_undo_log(entry_path, person_ops):
 
 def do_undo():
     if not UNDO_LOG.exists():
-        sys.exit("Nothing to undo.")
+        sys.exit(f"{C.CORAL}nothing to undo{C.NC}")
     log = json.loads(UNDO_LOG.read_text())
 
     p = Path(log["entry"])
     if p.exists():
         p.unlink()
-        print(f"  deleted: {p.name}")
+        print(f"  {C.SAGE}✓{C.NC} {C.DIM}deleted{C.NC} {p.name}")
     else:
-        print(f"  already gone: {p.name}")
+        print(f"  {C.DIM}already gone:{C.NC} {p.name}")
 
     deleted = reverted = 0
     for op in log["people"]:
@@ -330,16 +353,46 @@ def do_undo():
                 pf.write_text(content)
                 reverted += 1
 
-    print(f"  people: {deleted} deleted, {reverted} reverted")
+    parts = []
+    if deleted:
+        parts.append(f"{C.SAGE}{deleted} deleted{C.NC}")
+    if reverted:
+        parts.append(f"{C.DIM}{reverted} reverted{C.NC}")
+    print(f"  {C.DIM}people:{C.NC} {' · '.join(parts) if parts else C.DIM + 'none' + C.NC}")
     UNDO_LOG.unlink()
-    print("Undo complete.")
+    print()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    if len(sys.argv) < 2:
-        sys.exit(__doc__)
+    if len(sys.argv) > 1 and sys.argv[1] == '-w':
+        print(f"1. gm {C.DIM}\"Title\"{C.NC}               {C.DIM}# search and add{C.NC}")
+        print(f"2. gm {C.DIM}\"Title\" 2025{C.NC}           {C.DIM}# narrow by year{C.NC}")
+        print(f"3. gm {C.DIM}https://themoviedb.org/...{C.NC} {C.DIM}# add from URL{C.NC}")
+        print(f"4. gm {C.DIM}--undo{C.NC}                  {C.DIM}# reverse last add{C.NC}")
+        sys.exit(0)
+
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
+        print()
+        print(f"  {C.SKY}gm{C.NC} {C.DIM}— add a movie, TV show, or anime to graphite{C.NC}")
+        print()
+        print(f"  {C.DIM}usage:{C.NC}  gm <title> [year]")
+        print(f"          gm <tmdb-url>")
+        print(f"          gm --undo")
+        print()
+        print(f"  {C.DIM}options:{C.NC}")
+        print(f"    -h, --help    show this help")
+        print(f"    -w            show workflow")
+        print(f"    --undo        reverse the last add")
+        print()
+        print(f"  {C.DIM}examples:{C.NC}")
+        print(f"    gm {C.SAND}\"The Dark Knight\"{C.NC}")
+        print(f"    gm {C.SAND}\"Adolescence\" 2025{C.NC}")
+        print(f"    gm {C.SAND}https://www.themoviedb.org/movie/155{C.NC}")
+        print(f"    gm {C.SAND}https://www.themoviedb.org/tv/249042{C.NC}")
+        print()
+        sys.exit(0 if sys.argv[1:] and sys.argv[1] in ('-h', '--help') else 1)
 
     if sys.argv[1] == "--undo":
         do_undo()
@@ -349,7 +402,7 @@ def main():
     media_type, tmdb_id = extract_url_info(arg)
 
     if tmdb_id:
-        print(f"Using TMDB {media_type.upper()} ID {tmdb_id} from URL")
+        print(f"\n  {C.DIM}url:{C.NC} {media_type.upper()} {tmdb_id}")
         meta = tmdb_get(f"/{media_type}/{tmdb_id}")
     else:
         query = arg
@@ -357,20 +410,21 @@ def main():
 
         while True:
             results = search_multi(query, year_hint)
-            print(f"\nResults for: \"{query}\"{' (' + year_hint + ')' if year_hint else ''}")
+            yr_str = f" {C.DIM}({year_hint}){C.NC}" if year_hint else ""
+            print(f"\n  {C.DIM}results for:{C.NC} {C.SKY}{query}{C.NC}{yr_str}\n")
             for i, r in enumerate(results[:8]):
                 yr = (r.get("release_date") or r.get("first_air_date") or "")[:4] or "?"
                 t = r.get("title") or r.get("name") or "?"
                 mt = r.get("media_type", "?")
-                print(f"  [{i+1}] {t} ({yr}) [{mt}] — TMDB ID {r['id']}")
-            print(f"  [s] search again")
-            choice = input("\nPick number: ").strip().lower()
+                print(f"  {C.DIM}[{i+1}]{C.NC} {t} {C.DIM}({yr}) [{mt}]{C.NC}")
+            print(f"  {C.DIM}[s]{C.NC} search again")
+            choice = input(f"\n  {C.DIM}pick:{C.NC} ").strip().lower()
             if choice == "s":
-                query = input("New search query: ").strip()
-                year_hint = input("Year (optional, Enter to skip): ").strip() or None
+                query = input(f"  {C.DIM}query:{C.NC} ").strip()
+                year_hint = input(f"  {C.DIM}year (optional):{C.NC} ").strip() or None
                 continue
             if not choice.isdigit() or not (1 <= int(choice) <= min(8, len(results))):
-                print("Invalid choice.")
+                print(f"  {C.CORAL}invalid choice{C.NC}")
                 continue
             picked = results[int(choice) - 1]
             break
@@ -379,16 +433,16 @@ def main():
         tmdb_id = picked["id"]
         meta = tmdb_get(f"/{media_type}/{tmdb_id}")
 
-    # Fetch credits
+    # Fetch credits and show confirmation
     if media_type == "movie":
         credits = tmdb_get(f"/movie/{tmdb_id}/credits")
         title = meta["title"]
         year = (meta.get("release_date") or "")[:4]
         directors = [p["name"] for p in credits["crew"] if p["job"] == "Director"]
         director_str = ", ".join(directors) if directors else "unknown"
-        print(f"\n  {title} ({year}) [movie]")
-        print(f"  Directed by: {director_str}")
-        print(f"  Cast: {len(credits['cast'])}, Crew: {len(credits['crew'])}")
+        print(f"\n  {C.SKY}{title}{C.NC} {C.DIM}({year}) [movie]{C.NC}")
+        print(f"  {C.DIM}director:{C.NC} {director_str}")
+        print(f"  {C.DIM}cast:{C.NC} {len(credits['cast'])} · {C.DIM}crew:{C.NC} {len(credits['crew'])}")
     else:
         agg_credits = tmdb_get(f"/tv/{tmdb_id}/aggregate_credits")
         crew_credits = tmdb_get(f"/tv/{tmdb_id}/credits")
@@ -396,16 +450,16 @@ def main():
         year = (meta.get("first_air_date") or "")[:4]
         creators = [c["name"] for c in meta.get("created_by", [])]
         tag = "anime" if is_anime(meta) else "tv"
-        print(f"\n  {title} ({year}) [{tag}]")
+        print(f"\n  {C.SKY}{title}{C.NC} {C.DIM}({year}) [{tag}]{C.NC}")
         if creators:
-            print(f"  Created by: {', '.join(creators)}")
-        print(f"  Seasons: {meta.get('number_of_seasons', '?')}")
-        print(f"  Cast: {len(agg_credits.get('cast', []))}, Crew: {len(agg_credits.get('crew', []))}")
+            print(f"  {C.DIM}creator:{C.NC} {', '.join(creators)}")
+        print(f"  {C.DIM}seasons:{C.NC} {meta.get('number_of_seasons', '?')} · {C.DIM}cast:{C.NC} {len(agg_credits.get('cast', []))} · {C.DIM}crew:{C.NC} {len(agg_credits.get('crew', []))}")
 
-    print(f"  TMDB: https://www.themoviedb.org/{media_type}/{tmdb_id}")
-    confirm = input("\nAdd? [Y/n] ").strip().lower()
+    print(f"  {C.DIM}tmdb:{C.NC} https://www.themoviedb.org/{media_type}/{tmdb_id}")
+    confirm = input(f"\n  {C.DIM}add?{C.NC} [Y/n] ").strip().lower()
     if confirm == "n":
-        print("Aborted.")
+        print(f"  {C.DIM}aborted{C.NC}")
+        print()
         return
 
     # Build and write entry
@@ -420,11 +474,12 @@ def main():
 
     entry_path = dest_dir / safe_filename(title, year)
     if entry_path.exists():
-        print(f"  skip (already exists): {entry_path.name}")
+        print(f"\n  {C.SAND}skip{C.NC} {C.DIM}(already exists):{C.NC} {entry_path.name}")
+        print()
         return
 
     entry_path.write_text(content)
-    print(f"  created: {entry_path.relative_to(VAULT)}")
+    print(f"\n  {C.SAGE}✓{C.NC} {C.MINT}{entry_path.relative_to(VAULT)}{C.NC}")
 
     # Update people files
     person_ops = []
@@ -442,9 +497,14 @@ def main():
                 "line": entry_line,
             })
 
-    print(f"  people: {counts['created']} created, {counts['updated']} updated")
+    parts = [f"{C.SAGE}{counts['created']} created{C.NC}"]
+    if counts['updated']:
+        parts.append(f"{C.DIM}{counts['updated']} updated{C.NC}")
+    print(f"  {C.DIM}people:{C.NC} {' · '.join(parts)}")
+    print(f"  {C.DIM}run{C.NC} gm --undo {C.DIM}to reverse{C.NC}")
+    print()
+
     save_undo_log(entry_path, person_ops)
-    print("  (run with --undo to reverse)")
 
 
 if __name__ == "__main__":
