@@ -12,6 +12,7 @@ Usage:
     gm https://www.themoviedb.org/movie/155
     gm https://www.themoviedb.org/tv/249042
     gm --undo
+    gm --fill
 
 Author: Claude (Anthropic)
 License: Public Domain
@@ -24,7 +25,10 @@ import re
 import sys
 from pathlib import Path
 
-import requests
+try:
+    import requests
+except ImportError:
+    sys.exit("error: 'requests' is not installed. Run: pip install requests")
 
 
 class C:
@@ -41,9 +45,23 @@ class C:
 
 
 ROOT = Path(__file__).resolve().parent
-TOKEN = os.environ.get("TMDB_API_TOKEN") or (ROOT / ".env").read_text().split("TMDB_API_TOKEN=")[1].strip()
 BASE = "https://api.themoviedb.org/3"
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+
+
+def _get_token():
+    token = os.environ.get("TMDB_API_TOKEN")
+    if token:
+        return token
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("TMDB_API_TOKEN="):
+                return line.split("=", 1)[1].strip()
+    sys.exit(
+        f"\n  {C.CORAL}missing TMDB token{C.NC}\n\n"
+        f"  set {C.SAND}TMDB_API_TOKEN{C.NC} in your environment or in a {C.DIM}.env{C.NC} file:\n"
+        f"    echo 'TMDB_API_TOKEN=your_token_here' > .env\n"
+    )
 
 VAULT = ROOT / "graphite"
 PEOPLE_DIR = VAULT / "people"
@@ -75,7 +93,8 @@ JOB_LABEL = {j: l for j, l in CREW_JOBS}
 # ── TMDB helpers ──────────────────────────────────────────────────────────────
 
 def tmdb_get(path, **params):
-    r = requests.get(f"{BASE}{path}", headers=HEADERS, params=params)
+    headers = {"Authorization": f"Bearer {_get_token()}"}
+    r = requests.get(f"{BASE}{path}", headers=headers, params=params)
     r.raise_for_status()
     return r.json()
 
@@ -366,6 +385,138 @@ def do_undo():
     print()
 
 
+# ── Fill ──────────────────────────────────────────────────────────────────────
+
+MOVIE_FILL_FIELDS = ["country", "language", "studio", "collection"]
+TV_FILL_FIELDS    = ["network", "seasons", "creator", "country", "language", "studio"]
+
+FIELD_AFTER = {
+    "country":    "director",
+    "language":   "country",
+    "studio":     "language",
+    "collection": "studio",
+    "network":    "genre",
+    "seasons":    "network",
+    "creator":    "seasons",
+}
+
+
+def _field_block_end(lines, field):
+    for i, line in enumerate(lines):
+        if re.match(rf'^{re.escape(field)}:', line):
+            j = i + 1
+            while j < len(lines) and lines[j][:1] in (' ', '\t'):
+                j += 1
+            return j
+    return None
+
+
+def _insert_field(fm_text, field, value):
+    lines = fm_text.split('\n')
+    pred = FIELD_AFTER.get(field)
+    insert_at = _field_block_end(lines, pred) if pred else None
+    if insert_at is None:
+        insert_at = len(lines)
+    lines.insert(insert_at, f"{field}: {value}")
+    return '\n'.join(lines)
+
+
+def fill_entry(entry_path):
+    text = entry_path.read_text()
+    url_m = re.search(r'themoviedb\.org/(movie|tv)/(\d+)', text)
+    if not url_m:
+        return {}
+    media_type = url_m.group(1)
+    tmdb_id    = int(url_m.group(2))
+
+    fm_m = re.match(r'^---\n(.*?)\n---', text, re.DOTALL)
+    if not fm_m:
+        return {}
+    fm_text = fm_m.group(1)
+
+    fields_to_check = MOVIE_FILL_FIELDS if media_type == "movie" else TV_FILL_FIELDS
+    missing = [f for f in fields_to_check
+               if not re.search(rf'^{re.escape(f)}:', fm_text, re.MULTILINE)]
+    if not missing:
+        return {}
+
+    try:
+        meta = tmdb_get(f"/{media_type}/{tmdb_id}")
+    except Exception as e:
+        print(f"  {C.CORAL}tmdb error:{C.NC} {entry_path.name}: {e}")
+        return {}
+
+    values = {}
+    if media_type == "movie":
+        if "country" in missing:
+            v = (meta.get("production_countries") or [{}])[0].get("name", "")
+            if v: values["country"] = v
+        if "language" in missing:
+            v = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
+            if v: values["language"] = v
+        if "studio" in missing:
+            v = (meta.get("production_companies") or [{}])[0].get("name", "")
+            if v: values["studio"] = v
+        if "collection" in missing:
+            v = (meta.get("belongs_to_collection") or {}).get("name", "")
+            if v: values["collection"] = v
+    else:
+        if "network" in missing:
+            nets = [n["name"] for n in meta.get("networks", [])]
+            if nets: values["network"] = nets[0]
+        if "seasons" in missing:
+            s = meta.get("number_of_seasons")
+            if s: values["seasons"] = str(s)
+        if "creator" in missing:
+            creators = [c["name"] for c in meta.get("created_by", [])]
+            if creators: values["creator"] = f"[{', '.join(creators)}]"
+        if "country" in missing:
+            v = (meta.get("production_countries") or [{}])[0].get("name", "")
+            if v: values["country"] = v
+        if "language" in missing:
+            v = (meta.get("spoken_languages") or [{}])[0].get("english_name", "")
+            if v: values["language"] = v
+        if "studio" in missing:
+            v = (meta.get("production_companies") or [{}])[0].get("name", "")
+            if v: values["studio"] = v
+
+    if not values:
+        return {}
+
+    new_fm = fm_text
+    for field in fields_to_check:
+        if field in values:
+            new_fm = _insert_field(new_fm, field, values[field])
+
+    entry_path.write_text("---\n" + new_fm + "\n---" + text[fm_m.end():])
+    return values
+
+
+def do_fill():
+    entries = []
+    for d in [VAULT / "movies", VAULT / "tv", VAULT / "anime"]:
+        entries.extend(sorted(d.glob("*.md")))
+
+    if not entries:
+        sys.exit(f"{C.CORAL}no entries found{C.NC}")
+
+    print(f"\n  {C.DIM}scanning {len(entries)} entries...{C.NC}\n")
+    updated = 0
+    for entry_path in entries:
+        added = fill_entry(entry_path)
+        if added:
+            updated += 1
+            print(f"  {C.SAGE}✓{C.NC} {C.MINT}{entry_path.name}{C.NC}")
+            for k, v in added.items():
+                print(f"    {C.DIM}{k}:{C.NC} {v}")
+
+    if updated == 0:
+        print(f"  {C.DIM}all entries are up to date{C.NC}")
+    else:
+        print(f"\n  {C.DIM}filled {updated} {'entry' if updated == 1 else 'entries'}{C.NC}")
+    print()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -374,6 +525,8 @@ def main():
         print(f"2. gm {C.DIM}\"Title\" 2025{C.NC}           {C.DIM}# narrow by year{C.NC}")
         print(f"3. gm {C.DIM}https://themoviedb.org/...{C.NC} {C.DIM}# add from URL{C.NC}")
         print(f"4. gm {C.DIM}--undo{C.NC}                  {C.DIM}# reverse last add{C.NC}")
+        print(f"5. gm {C.DIM}--fill{C.NC}                  {C.DIM}# fill missing frontmatter fields{C.NC}")
+        print(f"6. gm {C.DIM}\"Title\" --dry-run{C.NC}       {C.DIM}# preview without writing{C.NC}")
         sys.exit(0)
 
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
@@ -383,11 +536,14 @@ def main():
         print(f"  {C.DIM}usage:{C.NC}  gm <title> [year]")
         print(f"          gm <tmdb-url>")
         print(f"          gm --undo")
+        print(f"          gm --fill")
         print()
         print(f"  {C.DIM}options:{C.NC}")
         print(f"    -h, --help    show this help")
         print(f"    -w            show workflow")
         print(f"    --undo        reverse the last add")
+        print(f"    --fill        populate missing frontmatter fields in all entries")
+        print(f"    --dry-run     preview what would be written without touching files")
         print()
         print(f"  {C.DIM}examples:{C.NC}")
         print(f"    gm {C.SAND}\"The Dark Knight\"{C.NC}")
@@ -401,7 +557,14 @@ def main():
         do_undo()
         return
 
-    arg = sys.argv[1]
+    if sys.argv[1] == "--fill":
+        do_fill()
+        return
+
+    dry_run = "--dry-run" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--dry-run"]
+
+    arg = args[0] if args else ""
     media_type, tmdb_id = extract_url_info(arg)
 
     if tmdb_id:
@@ -409,7 +572,7 @@ def main():
         meta = tmdb_get(f"/{media_type}/{tmdb_id}")
     else:
         query = arg
-        year_hint = sys.argv[2] if len(sys.argv) > 2 else None
+        year_hint = args[1] if len(args) > 1 else None
 
         while True:
             results = search_multi(query, year_hint)
@@ -466,6 +629,11 @@ def main():
         return
 
     # Build and write entry
+    if dry_run:
+        credits_data = credits if media_type == "movie" else (agg_credits, crew_credits)
+        main_dry_run(media_type, tmdb_id, meta, credits_data)
+        return
+
     if media_type == "movie":
         content = build_movie_md(meta, credits)
         dest_dir = VAULT / "movies"
@@ -508,6 +676,38 @@ def main():
     print()
 
     save_undo_log(entry_path, person_ops)
+
+
+def main_dry_run(media_type, tmdb_id, meta, credits_data):
+    """Show what would be written without touching the filesystem."""
+    if media_type == "movie":
+        credits = credits_data
+        title = meta["title"]
+        year = (meta.get("release_date") or "")[:4]
+        person_roles = collect_roles_movie(credits)
+        dest_dir = VAULT / "movies"
+    else:
+        agg_credits, crew_credits = credits_data
+        title = meta["name"]
+        year = (meta.get("first_air_date") or "")[:4]
+        person_roles = collect_roles_tv(meta, agg_credits, crew_credits)
+        dest_dir = entry_dir(media_type, meta)
+
+    entry_path = dest_dir / safe_filename(title, year)
+
+    print(f"\n  {C.DIM}[dry run]{C.NC}")
+    exists = entry_path.exists()
+    status = f"{C.SAND}already exists{C.NC}" if exists else f"{C.SAGE}would create{C.NC}"
+    print(f"  {status}  {C.MINT}{entry_path.relative_to(VAULT)}{C.NC}")
+
+    if not exists:
+        would_create = sum(1 for n in person_roles if not (PEOPLE_DIR / person_filename(n)).exists())
+        would_update = sum(1 for n in person_roles if (PEOPLE_DIR / person_filename(n)).exists())
+        parts = [f"{C.SAGE}{would_create} would create{C.NC}"]
+        if would_update:
+            parts.append(f"{C.DIM}{would_update} would update{C.NC}")
+        print(f"  {C.DIM}people:{C.NC} {' · '.join(parts)}")
+    print()
 
 
 if __name__ == "__main__":
