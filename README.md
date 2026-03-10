@@ -1,31 +1,25 @@
-# graphite-db
+# graphite
 
-Personal knowledge base of movies, TV shows, and anime. Entries are plain markdown files with YAML frontmatter, designed for [Obsidian](https://obsidian.md). Connections between works emerge through shared cast and crew — no editorial recommendations, no genre groupings, only people.
+A personal movie and TV database. You add a title, it pulls the full cast and crew from TMDB and creates a markdown file for the title and one for every person in it. Open it in Obsidian and the graph view shows how everything connects — not by genre or mood, just by people.
 
 ## Setup
 
-```bash
-pip install requests
-cp .env.example .env  # add your TMDB API token
-```
+1. Get a TMDB Read Access Token at https://www.themoviedb.org/settings/api
+2. Put it in a `.env` file: `TMDB_API_TOKEN=your_token_here`
+3. `pip install requests`
 
-Get a TMDB API token at https://www.themoviedb.org/settings/api (use the Read Access Token).
-
-## Usage
+## Add something
 
 ```bash
-gm "The Dark Knight"
-gm "Adolescence" 2025
-gm https://www.themoviedb.org/movie/155
-gm https://www.themoviedb.org/tv/249042
-gm --undo
+python fetch.py "The Dark Knight"
+python fetch.py "Adolescence" 2025
+python fetch.py https://www.themoviedb.org/movie/155
+python fetch.py --undo   # remove the last thing you added
 ```
 
-Or directly: `python fetch_movie.py "Title"`.
+## How it works
 
-Each entry gets a full cast and crew list. Every person mentioned gets their own file listing all their works in the database. The Obsidian graph view turns this into a connection map.
-
-## Structure
+Each title gets a markdown file with cast, crew, and metadata. Each person gets a file listing everything they appear in. The connections live in the graph, not in the files.
 
 ```
 graphite/
